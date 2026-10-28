@@ -1,0 +1,4 @@
+barcode_type,barcode_data,text,quantity
+CODE128,ABC123,Item A,2
+EAN13,890123456789,Item B,3
+CODE128,XYZ789,Item C,1

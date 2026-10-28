@@ -1,0 +1,8 @@
+USE_MOCK_PRINTER = True
+PRINTER_NAME = "Argox G-6000"
+
+LABEL_WIDTH_MM = 60
+LABEL_HEIGHT_MM = 40
+LABEL_GAP_MM = 2
+
+MOCK_OUTPUT_FILE = "mock_printer_output.txt"

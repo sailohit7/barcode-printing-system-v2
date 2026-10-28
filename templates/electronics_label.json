@@ -1,0 +1,49 @@
+{
+  "size": {
+    "width_mm": 100,
+    "height_mm": 70
+  },
+
+  "fields": [
+
+    {
+      "type": "text",
+      "key": "product_name",
+      "label": "Product",
+      "x": 20,
+      "y": 20
+    },
+
+    {
+      "type": "text",
+      "key": "brand",
+      "label": "Brand",
+      "x": 20,
+      "y": 80
+    },
+
+    {
+      "type": "text",
+      "key": "mrp",
+      "label": "MRP",
+      "x": 20,
+      "y": 120
+    },
+
+    {
+      "type": "barcode",
+      "key": "sku",
+      "barcode_type": "CODE128",
+      "x": 350,
+      "y": 20
+    },
+
+    {
+      "type": "barcode",
+      "key": "order_id",
+      "barcode_type": "CODE128",
+      "x": 350,
+      "y": 140
+    }
+  ]
+}
