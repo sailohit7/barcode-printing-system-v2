@@ -1,0 +1,31 @@
+LABEL DESIGNER REBUILD — 18 NOV 2026
+
+Based on the latest preserved-UI project supplied in this conversation.
+
+Scope of code changes:
+- ui/widgets/canvas.py: replaced the old canvas implementation with a stable,
+  independent top-level item model.
+- ui/main_window.py: updated only Label Designer element creation and property
+  handling to use the new canvas.
+
+Behaviour:
+- Text, shape, barcode, QR and image elements are independent top-level scene
+  items. Adding a new item does not replace an existing item.
+- Layer selection maps directly to a live scene item; the layer list is not
+  rebuilt during canvas selection changes.
+- Canvas scene bounds are based on paper size, not moving artwork.
+- Barcode creation uses the selected product's SKU/code when available,
+  otherwise uses SKU001 as a sample. python-barcode is used when installed;
+  a visible preview fallback is generated if unavailable.
+- QR creation uses qrcode when installed and a visible preview fallback otherwise.
+- Text can be moved, selected and edited by double-click.
+- Grid, ruler, zoom, fit, label size, properties, delete, save template,
+  image import, mapping navigation and continue-to-print controls are retained.
+- Existing Canvas methods used by mapping and print rendering are retained.
+
+Validation:
+- 40 Python files passed syntax compilation.
+- PySide6 is not installed in this execution environment, so live GUI, printer,
+  mapping-to-print and SQL integration tests could not be executed.
+- No Dashboard, SQL, Printer Manager, Database Settings or other page source
+  was intentionally modified.

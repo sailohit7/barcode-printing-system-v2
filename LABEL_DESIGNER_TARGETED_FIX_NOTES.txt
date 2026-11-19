@@ -1,0 +1,29 @@
+LABEL DESIGNER TARGETED FIX
+
+This build is based on the user's uploaded barcode-printing-system-label-designer-reworked(1).zip.
+
+Interface:
+- The existing Label Designer layout and styling are retained.
+- No dashboard, database, SQL, printer, or batch-print page redesign was made.
+
+Label Designer / canvas changes:
+- Layer rows are no longer destroyed and rebuilt on every selection change.
+- Layer list refresh occurs after adding/removing artwork; selection only updates row highlighting.
+- Layer selection blocks intermediate scene signals to prevent table row/item mappings changing during a click.
+- Scene bounds use a stable large workspace instead of repeatedly shrinking/growing around artwork.
+- Ruler toggle now draws/hides measurement ticks; grid toggle remains functional.
+- Property application replaces transforms instead of accumulating scale.
+- Text sizing avoids vertical transform scaling that can distort or collapse glyphs.
+- Delete button connection is singular and delete state follows selection.
+
+Existing tool connections retained:
+- Save template
+- Shapes, Text, Data/Mapping, Barcode, QR Code, Image, Layers
+- Refresh Layers
+- Apply Properties, Delete Selected
+- Grid, Ruler, Zoom In/Out, Fit Label
+- Continue to Print
+
+Validation:
+- All 40 Python source files passed py_compile.
+- PySide6 is not installed in the build environment; live Windows GUI/printer validation has not been performed.

@@ -55,10 +55,11 @@ class MainWindow(QMainWindow):
         self.btn_printer = QPushButton("▤   Printer Manager")
         self.btn_connection = QPushButton("⌁   Printer Connection")
         self.btn_history = QPushButton("◷   SQL History")
+        self.btn_database = QPushButton("⚙   Database Settings")
 
         self.nav_buttons = [
             self.btn_dashboard, self.btn_designer, self.btn_printer,
-            self.btn_connection, self.btn_history
+            self.btn_connection, self.btn_history, self.btn_database
         ]
         for button in self.nav_buttons:
             button.setObjectName("NavButton")
@@ -86,6 +87,7 @@ class MainWindow(QMainWindow):
 
         # NEW
         self.history_screen = self.build_history_screen()
+        self.database_screen = self.build_database_screen()
 
         self.stack.addWidget(self.dashboard)
         self.stack.addWidget(self.designer)
@@ -94,6 +96,7 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.printer_screen)
         self.stack.addWidget(self.connection_screen)
         self.stack.addWidget(self.history_screen)
+        self.stack.addWidget(self.database_screen)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         main_layout.addWidget(sidebar_panel)
@@ -123,6 +126,7 @@ class MainWindow(QMainWindow):
         self.btn_printer.clicked.connect(lambda: self.show_page(self.printer_screen, self.btn_printer, "Printer Manager", "Select an installed printer and refresh the device list."))
         self.btn_connection.clicked.connect(lambda: self.show_page(self.connection_screen, self.btn_connection, "Printer Connection", "Inspect printer status, ports, drivers, and test printing."))
         self.btn_history.clicked.connect(self.open_history_page)
+        self.btn_database.clicked.connect(lambda: self.show_page(self.database_screen, self.btn_database, "Database Settings", "Configure SQL Server for this computer."))
         self.show_page(self.dashboard, self.btn_dashboard, "Dashboard", "Manage products, labels, and print operations.", animate=False)
 
         # =======================
@@ -283,7 +287,7 @@ class MainWindow(QMainWindow):
         self.table.setHorizontalHeaderLabels([field.upper() for field in self.fields_config])
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.verticalHeader().setVisible(False)
@@ -500,34 +504,32 @@ class MainWindow(QMainWindow):
     # SAVE HISTORY
     # =========================================================
     def save_history(self):
-        row = self.table.currentRow()
-        if row < 0:
-            QMessageBox.information(self, "Select a product", "Select a product row in the table before saving history.")
+        rows = sorted({index.row() for index in self.table.selectionModel().selectedRows()})
+        if not rows and self.table.currentRow() >= 0:
+            rows = [self.table.currentRow()]
+        if not rows:
+            QMessageBox.information(self, "Select products", "Select one or more product rows before saving history.")
             return
-        data = {}
-        for col, field in enumerate(self.fields_config):
-            item = self.table.item(row, col)
-            data[str(field).strip().lower()] = item.text() if item else ""
         db = None
         try:
             from database.sql_manager import SQLManager
             db = SQLManager()
-            db.save_print_history(data)
-            QMessageBox.information(self, "History saved", "The selected product record was saved to SQL Server print history.")
+            for row in rows:
+                data = {}
+                for col, field in enumerate(self.fields_config):
+                    item = self.table.item(row, col)
+                    data[str(field).strip().lower()] = item.text() if item else ""
+                db.save_print_history(data)
+            QMessageBox.information(self, "History saved", f"Saved {len(rows)} selected product record(s) to SQL Server.")
             if hasattr(self, "history_table"):
                 self.load_sql_history()
         except Exception as exc:
-            QMessageBox.warning(self, "SQL Server unavailable", f"Could not save history. Check the SQL Server connection and PrintHistory table.\n\n{exc}")
+            QMessageBox.warning(self, "SQL Server unavailable", f"Could not save history.\n\n{exc}")
         finally:
             if db:
-                try:
-                    db.close()
-                except Exception:
-                    pass
+                try: db.close()
+                except Exception: pass
 
-        # =========================================================
-        # MAPPING SCREEN
-        # =========================================================
     def test_sql_connection(self):
         db = None
         try:
@@ -603,28 +605,22 @@ class MainWindow(QMainWindow):
     # GOTO MAPPING
     # =========================================================
     def goto_mapping(self):
-
-        row = self.table.currentRow()
-
-        if row < 0:
-            print("Select a row first ❌")
+        rows = sorted({index.row() for index in self.table.selectionModel().selectedRows()})
+        if not rows and self.table.currentRow() >= 0:
+            rows = [self.table.currentRow()]
+        if not rows:
+            QMessageBox.information(self, "Select products", "Select one or more product rows from the Dashboard.")
             return
-
-        self.selected_data = {}
-
-        for col, field in enumerate(self.fields_config):
-
-            item = self.table.item(row, col)
-
-            self.selected_data[field] = (
-                item.text() if item else ""
-            )
-
+        self.selected_product_rows = []
+        for row in rows:
+            record = {}
+            for col, field in enumerate(self.fields_config):
+                item = self.table.item(row, col)
+                record[field] = item.text() if item else ""
+            self.selected_product_rows.append(record)
+        self.selected_data = self.selected_product_rows[0]
         self.load_mapping_ui()
-
-        self.stack.setCurrentWidget(
-            self.mapping_screen
-        )
+        self.stack.setCurrentWidget(self.mapping_screen)
 
     # =========================================================
     # LOAD MAPPING
@@ -739,7 +735,9 @@ class MainWindow(QMainWindow):
         data = getattr(self, "selected_data", {}) or {}
         name = next((v for k, v in data.items() if str(k).strip().casefold() in ("name", "product", "product_name", "productname")), "")
         sku = next((v for k, v in data.items() if str(k).strip().casefold() in ("sku", "barcode", "barcode_value", "product_code", "code")), "")
-        self.print_summary.setText(f"Product: {name or '—'}    |    SKU / Barcode: {sku or '—'}")
+        count = len(getattr(self, "selected_product_rows", []) or [data])
+        suffix = f"    |    Batch: {count} product(s)" if count > 1 else ""
+        self.print_summary.setText(f"Product: {name or '—'}    |    SKU / Barcode: {sku or '—'}{suffix}")
 
     # =========================================================
     # PRINT SCREEN
@@ -808,6 +806,49 @@ class MainWindow(QMainWindow):
             self.print_printer_combo.addItem("Printer service unavailable")
             self.print_status_label.setText(f"Could not enumerate Windows printers: {exc}")
 
+    def _build_canvas_for_product(self, product_data):
+        """Render one product record into the label canvas using current field mappings."""
+        self.canvas.clear_canvas()
+        self.canvas.label_rect.setZValue(-100)
+        y = 16
+        has_barcode = False
+        for field, dropdown in self.mapping_widgets:
+            value = str(product_data.get(field, ""))
+            choice = dropdown.currentText()
+            if not value or choice == "None":
+                continue
+            if choice == "Text":
+                item = self.canvas.add_text_direct(f"{field}: {value}")
+                item.setPos(18, y)
+                y += max(32, item.boundingRect().height() + 8)
+            elif choice == "Barcode":
+                item = self.canvas.add_barcode_direct(
+                    value, barcode_type=self.mapping_barcode_type.currentText(),
+                    height=self.mapping_barcode_height.value(),
+                    scale=self.mapping_barcode_scale.value(),
+                    show_text=self.mapping_barcode_text.isChecked())
+                item.setPos(18, y)
+                has_barcode = True
+                y += self.mapping_barcode_height.value() * self.mapping_barcode_scale.value() + 25
+            elif choice == "QR":
+                item = self.canvas.add_qr_direct(value)
+                item.setPos(18, y)
+                y += 100
+        if not has_barcode:
+            sku_key = next((k for k in product_data if str(k).strip().casefold() in
+                            ("sku", "barcode", "barcode_value", "product_code", "code", "ean", "upc")
+                            and product_data.get(k)), None)
+            if sku_key:
+                item = self.canvas.add_barcode_direct(
+                    str(product_data[sku_key]), barcode_type=self.mapping_barcode_type.currentText(),
+                    height=self.mapping_barcode_height.value(),
+                    scale=self.mapping_barcode_scale.value(),
+                    show_text=self.mapping_barcode_text.isChecked())
+                item.setPos(18, y)
+                has_barcode = True
+        if not has_barcode:
+            raise ValueError("No barcode field is mapped and no SKU/code value is available.")
+
     def handle_print(self):
         raw_copies = self.copies_input.text().strip() or "1"
         try:
@@ -817,8 +858,9 @@ class MainWindow(QMainWindow):
         except ValueError:
             QMessageBox.warning(self, "Invalid copies", "Enter a whole number from 1 to 10000.")
             return
-        if not getattr(self, "selected_data", None):
-            QMessageBox.information(self, "No product selected", "Return to Dashboard and select a product first.")
+        product_records = getattr(self, "selected_product_rows", None) or ([self.selected_data] if getattr(self, "selected_data", None) else [])
+        if not product_records:
+            QMessageBox.information(self, "No products selected", "Return to Dashboard and select one or more products first.")
             return
         printer_name = self.print_printer_combo.currentText().strip()
         if not printer_name or printer_name in ("No printers found", "Printer service unavailable"):
@@ -839,8 +881,12 @@ class MainWindow(QMainWindow):
                 raise RuntimeError("Could not start the printer painter. Check the printer driver and queue.")
             try:
                 page_rect = QRectF(painter.viewport())
-                source_rect = self.canvas.label_rect.rect()
-                self.canvas.scene.render(painter, page_rect, source_rect, Qt.AspectRatioMode.KeepAspectRatio)
+                for index, product_data in enumerate(product_records):
+                    if index > 0 and not printer.newPage():
+                        raise RuntimeError("The printer could not start the next label page.")
+                    self._build_canvas_for_product(product_data)
+                    source_rect = self.canvas.label_rect.rect()
+                    self.canvas.scene.render(painter, page_rect, source_rect, Qt.AspectRatioMode.KeepAspectRatio)
             finally:
                 painter.end()
         except Exception as exc:
@@ -852,16 +898,17 @@ class MainWindow(QMainWindow):
         try:
             from database.sql_manager import SQLManager
             db = SQLManager()
-            normalized = {str(k).strip().casefold(): v for k, v in self.selected_data.items()}
-            db.save_print({
-                "name": normalized.get("name", normalized.get("product", normalized.get("product_name", ""))),
-                "sku": normalized.get("sku", normalized.get("barcode", normalized.get("product_code", ""))),
-                "price": normalized.get("price", ""),
-                "qty": normalized.get("qty", normalized.get("quantity", "")),
-            }, printer_name, copies)
-            self.print_status_label.setText(f"Print job submitted to {printer_name}; {copies} copy/copies recorded in SQL Server.")
-            QMessageBox.information(self, "Print submitted",
-                f"Label sent to {printer_name} for {copies} copy/copies. Print history was saved to SQL Server.")
+            for product_data in product_records:
+                normalized = {str(k).strip().casefold(): v for k, v in product_data.items()}
+                db.save_print({
+                    "name": normalized.get("name", normalized.get("product", normalized.get("product_name", ""))),
+                    "sku": normalized.get("sku", normalized.get("barcode", normalized.get("product_code", ""))),
+                    "price": normalized.get("price", ""),
+                    "qty": normalized.get("qty", normalized.get("quantity", "")),
+                }, printer_name, copies)
+            self.print_status_label.setText(f"Submitted {len(product_records)} label(s) to {printer_name}; {copies} copy/copies each. SQL history saved.")
+            QMessageBox.information(self, "Batch print submitted",
+                f"Sent {len(product_records)} selected product label(s) to {printer_name}, {copies} copy/copies each. SQL history was saved.")
             if hasattr(self, "history_table"):
                 self.load_sql_history()
         except Exception as exc:
@@ -1211,27 +1258,28 @@ class MainWindow(QMainWindow):
         # Narrow tool rail, similar to professional label editors.
         tool_rail = QFrame()
         tool_rail.setObjectName("DesignerToolRail")
-        tool_rail.setFixedWidth(66)
+        tool_rail.setFixedWidth(82)
         rail_layout = QVBoxLayout(tool_rail)
         rail_layout.setContentsMargins(5, 8, 5, 8)
         rail_layout.setSpacing(7)
 
         rail_specs = [
-            ("▣", "File", "file"),
-            ("◇", "Shapes", "shapes"),
+            ("▣", "Save", "file"),
+            ("◇", "Shape", "shapes"),
             ("T", "Text", "text"),
             ("▤", "Data", "data"),
             ("▥", "Barcode", "barcode"),
             ("▦", "QR Code", "qr"),
-            ("▧", "Media", "media"),
+            ("▧", "Image", "media"),
             ("☷", "Layers", "layers"),
         ]
         self.designer_tool_buttons = {}
         for glyph, label, key in rail_specs:
             btn = QPushButton(f"{glyph}\n{label}")
             btn.setObjectName("DesignerToolButton")
-            btn.setMinimumHeight(52)
+            btn.setMinimumHeight(58)
             btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip(label)
             rail_layout.addWidget(btn)
             self.designer_tool_buttons[key] = btn
         rail_layout.addStretch()
@@ -1351,9 +1399,11 @@ class MainWindow(QMainWindow):
         self.canvas.setMinimumSize(360, 320)
         self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.canvas.set_label_size(400, 200)
-        self.canvas.scene.setSceneRect(-120, -100, 640, 400)
+        # Scene bounds are managed by Canvas.set_label_size so large and small
+        # labels remain fully editable after resizing.
+        self.canvas._update_scene_bounds()
         self.canvas.label_rect.setPen(QColor("#111827"))
-        self.canvas.label_rect.setZValue(-10)
+        self.canvas.label_rect.setZValue(-100)
         stage_layout.addWidget(self.canvas, 1)
 
         # Bottom bar: physical size, grid/ruler toggles and zoom.
@@ -1411,7 +1461,9 @@ class MainWindow(QMainWindow):
         self.designer_layers.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.designer_layers.verticalHeader().setVisible(False)
         self.designer_layers.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.designer_layers.setSelectionMode(QAbstractItemView.SingleSelection)
         self.designer_layers.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._designer_layer_items = []
         layer_layout.addWidget(self.designer_layers, 1)
         refresh_layers = QPushButton("Refresh Layers")
         refresh_layers.clicked.connect(self._designer_refresh_layers)
@@ -1428,7 +1480,9 @@ class MainWindow(QMainWindow):
         self.fields.btn_qr.clicked.connect(self.canvas.add_qr)
         self.props.apply_btn.clicked.connect(self.update_position)
         self.canvas.scene.selectionChanged.connect(self.update_properties)
-        self.canvas.scene.selectionChanged.connect(self._designer_refresh_layers)
+        # Selection changes must NOT rebuild the layer table. Rebuilding it
+        # during a scene selection callback invalidates row/item mappings.
+        self.canvas.scene.selectionChanged.connect(self._designer_sync_layer_selection)
         self.canvas.scene.selectionChanged.connect(self._designer_load_properties)
         self.designer_layers.itemSelectionChanged.connect(self._designer_select_layer)
         self.designer_label_width.valueChanged.connect(self._designer_apply_label_size)
@@ -1445,133 +1499,281 @@ class MainWindow(QMainWindow):
         self._designer_refresh_layers()
         return page
 
+    def _designer_current_product_record(self):
+        """Resolve product data even when Label Designer is opened directly."""
+        record = getattr(self, "selected_data", None)
+        if isinstance(record, dict) and record:
+            return record
+        rows = getattr(self, "selected_product_rows", None) or []
+        if rows and isinstance(rows[0], dict):
+            self.selected_data = rows[0]
+            return rows[0]
+        table = getattr(self, "table", None)
+        fields = getattr(self, "fields_config", None) or []
+        if table is not None and fields:
+            row = table.currentRow()
+            if row < 0 and table.rowCount():
+                row = 0
+            if row >= 0:
+                record = {}
+                for col, field in enumerate(fields):
+                    cell = table.item(row, col)
+                    record[field] = cell.text() if cell else ""
+                self.selected_data = record
+                self.selected_product_rows = [record]
+                return record
+        return {}
+
     def _designer_add_text(self):
-        self.canvas.add_text()
-        self._designer_refresh_layers()
+        record = self._designer_current_product_record()
+        if record:
+            preferred = ("NAME", "PRODUCT", "PRODUCT_NAME", "TITLE")
+            normalized = {str(k).strip().upper().replace(" ", "_"): v
+                          for k, v in record.items()}
+            key = next((k for k in preferred if normalized.get(k) not in (None, "")), None)
+            if key:
+                item = self.canvas.add_text_direct(f"{key}: {normalized[key]}")
+            else:
+                item = self.canvas.add_text_direct(
+                    f"{next(iter(record))}: {next(iter(record.values()))}"
+                )
+        else:
+            item = self.canvas.add_text()
+        self._designer_finish_add(item)
+
+    def _designer_default_product_value(self, preferred=("SKU", "BARCODE", "CODE", "PRODUCT_CODE", "EAN", "UPC", "NAME")):
+        record = self._designer_current_product_record()
+        normalized = {str(k).strip().upper().replace(" ", "_"): v
+                      for k, v in record.items()}
+        for key in preferred:
+            value = normalized.get(key)
+            if value not in (None, ""):
+                return str(value)
+        for value in normalized.values():
+            if value not in (None, ""):
+                return str(value)
+        return "SKU001"
 
     def _designer_add_barcode(self):
-        self.canvas.add_barcode()
-        self._designer_refresh_layers()
+        value = self._designer_default_product_value()
+        barcode_type = "CODE128"
+        if hasattr(self, "mapping_barcode_type"):
+            barcode_type = self.mapping_barcode_type.currentText()
+        item = self.canvas.add_barcode_direct(
+            value, barcode_type=barcode_type, height=70, scale=1.0, show_text=True
+        )
+        self._designer_finish_add(item)
 
     def _designer_add_qr(self):
-        self.canvas.add_qr()
+        value = self._designer_default_product_value(
+            ("SKU", "BARCODE", "CODE", "PRODUCT_CODE", "EAN", "UPC", "NAME")
+        )
+        item = self.canvas.add_qr_direct(value)
+        self._designer_finish_add(item)
+
+    def _designer_finish_add(self, item):
+        if item is not None:
+            # Track every added artwork item explicitly. Never replace the
+            # scene or remove previously-created items when a tool is clicked.
+            if not hasattr(self, "_designer_artwork_items"):
+                self._designer_artwork_items = []
+            if item not in self._designer_artwork_items:
+                self._designer_artwork_items.append(item)
+            if item.scene() is None:
+                self.canvas.scene.addItem(item)
+            if item.scene() is self.canvas.scene:
+                self.canvas.scene.blockSignals(True)
+                try:
+                    self.canvas.scene.clearSelection()
+                    item.setSelected(True)
+                finally:
+                    self.canvas.scene.blockSignals(False)
+                self.canvas.ensureVisible(item, 30, 30)
         self._designer_refresh_layers()
+        self._designer_sync_layer_selection()
+        self._designer_load_properties()
 
     def _designer_add_shape(self):
-        from PySide6.QtWidgets import QGraphicsRectItem
-        from PySide6.QtGui import QBrush, QColor, QPen
-        from PySide6.QtWidgets import QGraphicsItem
-        item = QGraphicsRectItem(0, 0, 100, 55)
-        item.setBrush(QBrush(QColor("#dbeafe")))
-        item.setPen(QPen(QColor("#2563eb"), 2))
-        item.setFlags(QGraphicsItem.ItemIsMovable | QGraphicsItem.ItemIsSelectable)
-        item.setPos(70, 65)
-        self.canvas.scene.addItem(item)
-        self._designer_refresh_layers()
+        item = self.canvas.add_shape()
+        self._designer_finish_add(item)
 
     def _designer_add_image(self):
-        from PySide6.QtWidgets import QGraphicsPixmapItem
         path, _ = QFileDialog.getOpenFileName(
             self, "Add image to label", "", "Images (*.png *.jpg *.jpeg *.bmp)"
         )
         if not path:
             return
-        from PySide6.QtGui import QPixmap
-        pixmap = QPixmap(path)
-        if pixmap.isNull():
-            QMessageBox.warning(self, "Image error", "The selected image could not be loaded.")
-            return
-        item = QGraphicsPixmapItem(pixmap)
-        item.setFlags(item.flags() | item.GraphicsItemFlag.ItemIsMovable |
-                      item.GraphicsItemFlag.ItemIsSelectable)
-        self.canvas.scene.addItem(item)
-        self._designer_refresh_layers()
+        try:
+            item = self.canvas.add_image(path)
+            self._designer_finish_add(item)
+        except Exception as exc:
+            QMessageBox.warning(self, "Image error", str(exc))
 
     def _designer_show_layers(self):
         self._designer_refresh_layers()
         self.designer_layers.setFocus()
 
     def _designer_refresh_layers(self, *args):
+        """Refresh layer rows only after adding/removing objects, not on selection."""
         if not hasattr(self, "designer_layers") or not hasattr(self, "canvas"):
             return
-        self.designer_layers.blockSignals(True)
-        self.designer_layers.setRowCount(0)
-        for item in self.canvas.scene.items():
-            if item is self.canvas.label_rect or item.parentItem() is not None:
-                continue
-            row = self.designer_layers.rowCount()
-            self.designer_layers.insertRow(row)
-            kind = "Text" if item.__class__.__name__ == "QGraphicsTextItem" else (
-                "Barcode / QR" if item.__class__.__name__ in ("QGraphicsPixmapItem",) else "Shape / Code"
-            )
-            label = f"{kind}  ·  {row + 1}"
-            from PySide6.QtWidgets import QTableWidgetItem
-            cell = QTableWidgetItem(label)
-            cell.setData(Qt.UserRole, item)
-            self.designer_layers.setItem(row, 0, cell)
-            if item.isSelected():
-                self.designer_layers.selectRow(row)
-        self.designer_layers.blockSignals(False)
+        from PySide6.QtWidgets import QTableWidgetItem, QGraphicsTextItem, QGraphicsPixmapItem
+        table = self.designer_layers
+        selected = self.canvas.get_selected_item()
+        table.blockSignals(True)
+        try:
+            table.setRowCount(0)
+            self._designer_layer_items = []
+            # Scene.items() is top-to-bottom. Keep only top-level artwork;
+            # barcode/QR group children are represented by their parent group.
+            items = []
+            for item in self.canvas.scene.items():
+                try:
+                    if item is self.canvas.label_rect or item.parentItem() is not None:
+                        continue
+                    if item.scene() is self.canvas.scene:
+                        items.append(item)
+                except RuntimeError:
+                    continue
+            for row, item in enumerate(items):
+                marker = item.data(0)
+                kind = str(marker).upper() if marker else (
+                    "TEXT" if isinstance(item, QGraphicsTextItem) else
+                    "IMAGE / BARCODE" if isinstance(item, QGraphicsPixmapItem) else
+                    "SHAPE / GROUP"
+                )
+                cell = QTableWidgetItem(f"{kind}  ·  {row + 1}")
+                cell.setData(Qt.UserRole, row)
+                table.insertRow(row)
+                table.setItem(row, 0, cell)
+                self._designer_layer_items.append(item)
+                if item is selected or item.isSelected():
+                    table.selectRow(row)
+                    table.setCurrentCell(row, 0)
+        finally:
+            table.blockSignals(False)
+        self._designer_sync_layer_selection()
+
+    def _designer_sync_layer_selection(self):
+        """Highlight the selected canvas item without rebuilding the layer list."""
+        if not hasattr(self, "designer_layers"):
+            return
+        selected = self.canvas.get_selected_item()
+        table = self.designer_layers
+        table.blockSignals(True)
+        try:
+            table.clearSelection()
+            if selected is not None:
+                for row, item in enumerate(getattr(self, "_designer_layer_items", [])):
+                    if item is selected and item.scene() is self.canvas.scene:
+                        table.selectRow(row)
+                        table.setCurrentCell(row, 0)
+                        break
+            self.designer_delete_btn.setEnabled(selected is not None)
+        finally:
+            table.blockSignals(False)
 
     def _designer_select_layer(self):
         row = self.designer_layers.currentRow()
-        if row < 0:
+        if row < 0 or row >= len(getattr(self, "_designer_layer_items", [])):
             return
-        cell = self.designer_layers.item(row, 0)
-        if cell:
-            item = cell.data(Qt.UserRole)
+        item = self._designer_layer_items[row]
+        if item is None or item.scene() is not self.canvas.scene:
+            self._designer_refresh_layers()
+            return
+        # Block scene callbacks while switching selection so the table remains
+        # intact and its row-to-item mapping cannot be replaced mid-click.
+        self.canvas.scene.blockSignals(True)
+        try:
             self.canvas.scene.clearSelection()
-            if item:
-                item.setSelected(True)
-                self.canvas.centerOn(item)
+            item.setSelected(True)
+        finally:
+            self.canvas.scene.blockSignals(False)
+        self.canvas.centerOn(item)
+        self._designer_load_properties()
+        self._designer_sync_layer_selection()
+        self.canvas.viewport().update()
 
     def _designer_load_properties(self):
         item = self.canvas.get_selected_item()
-        if not item:
+        if item is None:
+            self.designer_delete_btn.setEnabled(False)
             return
+        from PySide6.QtWidgets import QGraphicsTextItem
+        from PySide6.QtCore import QSignalBlocker
+        widgets = (
+            self.designer_x, self.designer_y, self.designer_width,
+            self.designer_height, self.designer_rotation,
+            self.designer_font_size, self.designer_opacity
+        )
+        blockers = [QSignalBlocker(widget) for widget in widgets]
         pos = item.pos()
         self.designer_x.setValue(pos.x())
         self.designer_y.setValue(pos.y())
-        rect = item.boundingRect()
-        self.designer_width.setValue(max(1, rect.width()))
-        self.designer_height.setValue(max(1, rect.height()))
-        self.designer_rotation.setValue(int(item.rotation()))
-        self._designer_refresh_layers()
+        bounds = item.sceneBoundingRect()
+        self.designer_width.setValue(max(1.0, bounds.width()))
+        self.designer_height.setValue(max(1.0, bounds.height()))
+        self.designer_rotation.setValue(int(round(item.rotation())))
+        if isinstance(item, QGraphicsTextItem):
+            point_size = item.font().pointSizeF()
+            self.designer_font_size.setValue(
+                max(5, int(round(point_size if point_size > 0 else 10)))
+            )
+        self.designer_opacity.setValue(round(item.opacity() * 100))
+        del blockers
+        self.designer_delete_btn.setEnabled(True)
 
     def _designer_apply_properties(self):
         item = self.canvas.get_selected_item()
-        if not item:
+        if item is None:
             QMessageBox.information(self, "Select an element", "Select a label element before applying properties.")
             return
+        from PySide6.QtWidgets import QGraphicsTextItem, QGraphicsRectItem, QGraphicsPixmapItem
+        from PySide6.QtGui import QTransform
+
         item.setPos(self.designer_x.value(), self.designer_y.value())
         item.setRotation(self.designer_rotation.value())
-        from PySide6.QtWidgets import QGraphicsTextItem, QGraphicsRectItem, QGraphicsPixmapItem
-        from PySide6.QtGui import QFont
+        width = float(self.designer_width.value())
+        height = float(self.designer_height.value())
+
         if isinstance(item, QGraphicsTextItem):
             font = item.font()
-            font.setPointSize(self.designer_font_size.value())
+            font.setPointSizeF(float(self.designer_font_size.value()))
             item.setFont(font)
+            item.setTextWidth(width)
         elif isinstance(item, QGraphicsRectItem):
             rect = item.rect()
-            rect.setWidth(self.designer_width.value())
-            rect.setHeight(self.designer_height.value())
-            item.setRect(rect)
+            item.setTransform(QTransform())
+            item.setScale(1.0)
+            item.setRect(rect.x(), rect.y(), width, height)
         elif isinstance(item, QGraphicsPixmapItem):
-            bounds = item.pixmap().size()
-            if bounds.width() and bounds.height():
-                item.setScale(min(self.designer_width.value() / bounds.width(),
-                                  self.designer_height.value() / bounds.height()))
-        if hasattr(item, "setOpacity"):
-            item.setOpacity(self.designer_opacity.value() / 100.0)
-        self._designer_refresh_layers()
+            pix = item.pixmap()
+            if pix.width() > 0 and pix.height() > 0:
+                item.setTransformOriginPoint(0, 0)
+                item.setScale(1.0)
+                item.setTransform(QTransform.fromScale(
+                    width / pix.width(), height / pix.height()
+                ))
+        else:
+            self.canvas.resize_item(item, width, height)
+
+        item.setOpacity(self.designer_opacity.value() / 100.0)
+        self.canvas._update_scene_bounds()
+        self._designer_load_properties()
         self.canvas.viewport().update()
 
     def _designer_delete_selected(self):
         item = self.canvas.get_selected_item()
         if not item:
             return
-        self.canvas.scene.removeItem(item)
+        self.canvas.scene.blockSignals(True)
+        try:
+            self.canvas.scene.removeItem(item)
+        finally:
+            self.canvas.scene.blockSignals(False)
+        self.canvas._update_scene_bounds()
         self._designer_refresh_layers()
+        self.designer_delete_btn.setEnabled(False)
 
     def _designer_apply_label_size(self, *args):
         width_mm = self.designer_label_width.value()
@@ -1582,33 +1784,39 @@ class MainWindow(QMainWindow):
         self._designer_fit_label()
 
     def _designer_toggle_grid(self, enabled):
-        if enabled:
-            self.canvas.setBackgroundBrush(QBrush(QColor("#e5e7eb")))
-            self.canvas.setStyleSheet("""
-                QGraphicsView {
-                    background-color: #e5e7eb;
-                    background-image: none;
-                    border: 1px solid #cbd5e1;
-                }
-            """)
-        else:
-            self.canvas.setStyleSheet("QGraphicsView { background-color: #e5e7eb; border: 1px solid #cbd5e1; }")
+        if hasattr(self.canvas, "set_grid_enabled"):
+            self.canvas.set_grid_enabled(enabled)
+        self.canvas.viewport().update()
 
     def _designer_toggle_rulers(self, enabled):
-        # Ruler toggle currently controls the visible ruler/grid guide treatment.
+        self.canvas.set_rulers_enabled(enabled)
         self.designer_ruler_toggle.setToolTip(
             "Ruler guides enabled" if enabled else "Ruler guides hidden"
         )
 
     def _designer_zoom(self, factor):
-        self.canvas.scale(factor, factor)
-        self.designer_zoom_label.setText(f"{int(self.canvas.transform().m11() * 100)}%")
+        current = self.canvas.transform().m11()
+        target = max(0.15, min(5.0, current * float(factor)))
+        if current > 0:
+            self.canvas.scale(target / current, target / current)
+        self.designer_zoom_label.setText(f"{int(target * 100)}%")
 
     def _designer_fit_label(self):
-        self.canvas.resetTransform()
-        self.canvas.fitInView(self.canvas.label_rect, Qt.KeepAspectRatio)
-        self.designer_zoom_label.setText(f"{int(self.canvas.transform().m11() * 100)}%")
-        self.canvas.centerOn(self.canvas.label_rect)
+        # Defer until Qt has laid out the stage; fit only the paper, never the
+        # changing union of paper + objects (which caused the label to jump away).
+        from PySide6.QtCore import QTimer
+        def apply_fit():
+            if (not hasattr(self, "canvas") or self.canvas.label_rect is None
+                    or self.canvas.label_rect.scene() is not self.canvas.scene):
+                return
+            rect = self.canvas.label_rect.sceneBoundingRect()
+            if rect.width() <= 0 or rect.height() <= 0:
+                return
+            self.canvas.resetTransform()
+            self.canvas.fitInView(rect.adjusted(-8, -8, 8, 8), Qt.KeepAspectRatio)
+            self.canvas.centerOn(rect.center())
+            self.designer_zoom_label.setText(f"{int(self.canvas.transform().m11() * 100)}%")
+        QTimer.singleShot(0, apply_fit)
 
     # =========================================================
     # POSITION
@@ -1634,6 +1842,149 @@ class MainWindow(QMainWindow):
             self.props.x_input.setText(str(x))
             self.props.y_input.setText(str(y))
     
+
+    def build_database_screen(self):
+        """Allow each Windows computer to configure its own SQL Server connection."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+
+        intro = QLabel("Enter the SQL Server details for this computer. Test the connection before saving.")
+        intro.setWordWrap(True)
+        intro.setObjectName("MetricHint")
+        layout.addWidget(intro)
+
+        form_panel = QFrame()
+        form_panel.setObjectName("Panel")
+        form = QGridLayout(form_panel)
+        form.setContentsMargins(18, 18, 18, 18)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(12)
+
+        self.sql_driver = QComboBox()
+        try:
+            import pyodbc
+            self.sql_driver.addItems(sorted(pyodbc.drivers()))
+        except Exception:
+            self.sql_driver.addItems(["SQL Server", "ODBC Driver 17 for SQL Server", "ODBC Driver 18 for SQL Server"])
+        self.sql_server = QLineEdit(".\\SQLEXPRESS")
+        self.sql_database = QLineEdit("barcode_system")
+        self.sql_auth = QComboBox()
+        self.sql_auth.addItems(["Windows", "SQL Server"])
+        self.sql_username = QLineEdit()
+        self.sql_password = QLineEdit()
+        self.sql_password.setEchoMode(QLineEdit.Password)
+        self.sql_trust = QCheckBox("Trust server certificate (useful for local SQL Server installations)")
+        self.sql_trust.setChecked(True)
+
+        fields = [
+            ("ODBC Driver", self.sql_driver), ("Server / Instance", self.sql_server),
+            ("Database", self.sql_database), ("Authentication", self.sql_auth),
+            ("SQL Username", self.sql_username), ("SQL Password", self.sql_password),
+        ]
+        for row, (caption, widget) in enumerate(fields):
+            form.addWidget(QLabel(caption), row, 0)
+            form.addWidget(widget, row, 1)
+        form.addWidget(self.sql_trust, len(fields), 0, 1, 2)
+        layout.addWidget(form_panel)
+
+        self.sql_auth.currentTextChanged.connect(self._update_sql_auth_fields)
+        self._update_sql_auth_fields(self.sql_auth.currentText())
+
+        buttons = QHBoxLayout()
+        self.sql_test_button = QPushButton("Test Connection")
+        self.sql_test_button.setObjectName("PrimaryButton")
+        self.sql_save_button = QPushButton("Save Settings")
+        self.sql_test_button.clicked.connect(self.test_database_settings)
+        self.sql_save_button.clicked.connect(self.save_database_settings)
+        buttons.addWidget(self.sql_test_button)
+        buttons.addWidget(self.sql_save_button)
+        buttons.addStretch()
+        layout.addLayout(buttons)
+
+        self.sql_settings_status = QLabel("Connection settings are stored separately for each Windows user.")
+        self.sql_settings_status.setWordWrap(True)
+        self.sql_settings_status.setObjectName("MetricHint")
+        layout.addWidget(self.sql_settings_status)
+        layout.addStretch()
+        self.load_database_settings_into_form()
+        return page
+
+    def _update_sql_auth_fields(self, mode):
+        sql_auth = mode == "SQL Server"
+        self.sql_username.setEnabled(sql_auth)
+        self.sql_password.setEnabled(sql_auth)
+
+    def _collect_sql_settings(self):
+        return {
+            "driver": self.sql_driver.currentText().strip(),
+            "server": self.sql_server.text().strip(),
+            "database": self.sql_database.text().strip(),
+            "authentication": self.sql_auth.currentText(),
+            "username": self.sql_username.text().strip(),
+            "password": self.sql_password.text(),
+            "trust_server_certificate": self.sql_trust.isChecked(),
+        }
+
+    def load_database_settings_into_form(self):
+        try:
+            from database.connection_settings import load_connection_settings
+            settings = load_connection_settings()
+            driver_index = self.sql_driver.findText(settings.get("driver", "SQL Server"))
+            if driver_index < 0 and settings.get("driver"):
+                self.sql_driver.addItem(settings["driver"])
+                driver_index = self.sql_driver.findText(settings["driver"])
+            if driver_index >= 0:
+                self.sql_driver.setCurrentIndex(driver_index)
+            self.sql_server.setText(settings.get("server", ".\\SQLEXPRESS"))
+            self.sql_database.setText(settings.get("database", "barcode_system"))
+            self.sql_auth.setCurrentText(settings.get("authentication", "Windows"))
+            self.sql_username.setText(settings.get("username", ""))
+            self.sql_password.setText(settings.get("password", ""))
+            self.sql_trust.setChecked(settings.get("trust_server_certificate", True))
+        except Exception as exc:
+            self.sql_settings_status.setText(f"Could not load saved connection settings: {exc}")
+
+    def test_database_settings(self):
+        db = None
+        try:
+            from database.sql_manager import SQLManager
+            db = SQLManager(self._collect_sql_settings())
+            result = db.test()
+            self.sql_settings_status.setText(
+                f"Connected successfully. Server: {result[0]} | Database: {result[1]}"
+            )
+            QMessageBox.information(self, "SQL Server Connected",
+                f"Connection successful.\nServer: {result[0]}\nDatabase: {result[1]}\n\nRequired application tables were checked/created.")
+        except Exception as exc:
+            self.sql_settings_status.setText(f"Connection failed: {exc}")
+            QMessageBox.critical(self, "SQL Connection Failed", str(exc))
+        finally:
+            if db:
+                db.close()
+
+    def save_database_settings(self):
+        db = None
+        try:
+            settings = self._collect_sql_settings()
+            # Verify the target before making it the active saved connection.
+            from database.sql_manager import SQLManager
+            db = SQLManager(settings)
+            result = db.test()
+            from database.connection_settings import save_connection_settings
+            save_connection_settings(settings)
+            self.sql_settings_status.setText(
+                f"Settings saved. Connected to {result[0]} / {result[1]}."
+            )
+            QMessageBox.information(self, "Settings Saved",
+                "SQL Server settings have been saved for this Windows user. All SQL features will use this connection.")
+        except Exception as exc:
+            self.sql_settings_status.setText(f"Settings were not saved: {exc}")
+            QMessageBox.critical(self, "Could Not Save Settings", str(exc))
+        finally:
+            if db:
+                db.close()
 
     def build_history_screen(self):
         page = QWidget()
